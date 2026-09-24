@@ -30,6 +30,15 @@ The index is rebuilt automatically whenever Homebrew or one of your folders chan
 
 Requirements: macOS or Linux with [Homebrew](https://brew.sh), `fzf` and `jq`. `tldr` is optional but makes the preview much nicer.
 
+With Homebrew:
+
+```sh
+brew install wiredframe/tap/los
+brew install tlrc    # optional, for the tldr preview
+```
+
+Or by hand:
+
 ```sh
 brew install fzf jq tlrc
 curl -fsSL https://raw.githubusercontent.com/Wiredframe/los/main/los -o ~/.local/bin/los
