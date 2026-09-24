@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# los - a tiny launcher for everything you installed in the terminal.
+#
+# Finds your Homebrew formulae and casks plus executables in your own folders,
+# describes them with `brew desc`, sorts them into categories and lets you pick
+# one with fzf. No catalog to maintain: install something and it shows up.
+#
+#   los                 pick a program (with shell integration: lands in your prompt)
+#   los --refresh       rebuild the index now
+#   los --init zsh      print the shell integration, put `eval "$(los --init zsh)"` in ~/.zshrc
+#
+# Settings (environment):
+#   LOS_PATHS    extra folders with your own scripts, colon separated (default: ~/.local/bin)
+#   LOS_IGNORE   file with names to hide, one per line (default: ~/.config/los/ignore)
+
+set -o pipefail
+VERSION="1.0.0"
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/los"
+INDEX="$CACHE_DIR/index.tsv"
+IGNORE="${LOS_IGNORE:-${XDG_CONFIG_HOME:-$HOME/.config}/los/ignore}"
+IFS=: read -r -a PATHS <<<"${LOS_PATHS:-$HOME/.local/bin}"
+SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+BREW_PREFIX="$(brew --prefix 2>/dev/null)"
+
+# ─── categories ──────────────────────────────────────────────────────────────
+# First matching rule wins. Matched against the lowercased description and name.
+categorize() {
+  local s
+  s=$(printf '%s %s' "$1" "$2" | tr '[:upper:]' '[:lower:]')
+  case "$s" in
+    *intelligence*|*llm*|*openai*|*" gpt"*|*" ai "*|*chatbot*) echo AI ;;
+    *"language server"*) echo Code ;;
+    *browser*|*http*|*" web"*|*download*|*retriever*|*" url"*) echo Web ;;
+    *music*|*audio*|*video*|*youtube*|*media*|*player*|*mp3*|*mpeg*|*image*|*photo*|*ocr*|*transcod*|*exif*) echo Media ;;
+    *mail*|*rss*|*feed*|*calendar*|*reminder*|*chat*|*messag*|*irc*) echo Communication ;;
+    *json*|*csv*|*sql*|*database*|*yaml*|*xml*) echo Data ;;
+    *editor*|*markdown*|*"cat(1)"*|*"syntax highlight"*|*pdf*|*document*|*" note"*) echo Writing ;;
+    *" git"*|*github*|*compiler*|*programming*|*typescript*|*javascript*|*python*|*xcode*|*debugg*|*lint*|*"revision control"*) echo Code ;;
+    *file*|*director*|*archiv*|*zip*|*rar*|*trash*|*rsync*|*folder*|*" ls"*|*navigate*) echo Files ;;
+    *monitor*|*process*|*system*|*cpu*|*memory*|*display*|*fetch*|*battery*|*uninstall*|*" du "*|*"disk usage"*) echo System ;;
+    *dns*|*network*|*vpn*|*ssh*|*bluetooth*|*wifi*|*speed*) echo Network ;;
+    *shell*|*prompt*|*terminal*|*zsh*|*bash*|*history*|*fuzzy*|*cheat*|*tldr*) echo Shell ;;
+    *) echo Other ;;
+  esac
+}
+
+# ─── index ───────────────────────────────────────────────────────────────────
+# One line per program: category, name, command, description, source
+needs_refresh() {
+  [ -s "$INDEX" ] || return 0
+  local src
+  for src in "$BREW_PREFIX/Cellar" "$BREW_PREFIX/Caskroom" "${PATHS[@]}" "$IGNORE"; do
+    [ -e "$src" ] && [ "$src" -nt "$INDEX" ] && return 0
+  done
+  return 1
+}
+
+main_binary() {  # the formula's own command: same name, else the only one, else the first
+  local name=$1 bin="$BREW_PREFIX/opt/$1/bin" files
+  [ -d "$bin" ] || return 1
+  [ -x "$bin/$name" ] && { echo "$name"; return; }
+  files=$(ls "$bin" 2>/dev/null)
+  [ -n "$files" ] || return 1
+  echo "$files" | head -1
+}
+
+script_desc() {  # the first line of the comment block at the top of a script, without "name - "
+  local base=${1##*/}
+  LC_ALL=C awk -v base="${base%.*}" -v full="$base" '
+    NR == 1 && /^#!/ { next }
+    /^[[:space:]]*$/ { if (started) exit; next }
+    /^(#|\/\/|"""|\x27\x27\x27)/ {
+      started = 1
+      line = $0; sub(/^(#+|\/\/+|"""|\x27\x27\x27)[[:space:]]*/, "", line)
+      if (line ~ /shellcheck|-\*-|^exec|^[[:punct:]]*$/) next
+      n = length(full); if (substr(line, 1, n) == full) line = substr(line, n + 1)
+      n = length(base); if (substr(line, 1, n) == base) line = substr(line, n + 1)
+      sub(/^[[:space:]]*[-:][[:space:]]*/, "", line)
+      if (line != "") { print line; exit }
+      next
+    }
+    { exit }' "$1" 2>/dev/null
+}
+
+build_index() {
+  mkdir -p "$CACHE_DIR"
+  local tmp="$INDEX.tmp" name desc cmd f
+  : >"$tmp"
+  if [ -n "$BREW_PREFIX" ]; then
+    brew info --json=v2 --installed 2>/dev/null | jq -r '
+      (.formulae[] | select(any(.installed[]; .installed_on_request)) | ["formula", .name, (.desc // "")]),
+      (.casks[]    | select(any(.artifacts[]; has("app")))               | ["cask", .token, (.desc // ""),
+                     ([.artifacts[] | select(has("app")) | .app[0]] | first | tostring)])
+      | @tsv' |
+    while IFS=$'\t' read -r kind name desc app; do
+      if [ "$kind" = formula ]; then
+        # libraries and plumbing that happen to ship a command are skipped
+        [[ $name == lib* || $desc =~ [Ll]ibrary|[Tt]oolkit|internationalization|shaping|authentication\ protocol ]] && continue
+        cmd=$(main_binary "$name") || continue
+        printf '%s\t%s\t%s\t%s\tbrew\n' "$(categorize "$desc" "$name")" "$name" "$cmd" "$desc"
+      else
+        printf 'App\t%s\topen -a %q\t%s\tcask\n' "$name" "${app%.app}" "$desc"
+      fi
+    done >>"$tmp"
+  fi
+  for dir in "${PATHS[@]}"; do
+    [ -d "$dir" ] || continue
+    for f in "$dir"/*; do
+      [ -f "$f" ] && [ -x "$f" ] || continue
+      name=$(basename "$f")
+      [[ $name == los || $name == *.bak || $name == *.old || $name == *~ ]] && continue
+      desc=$(script_desc "$f")
+      printf 'Mine\t%s\t%s\t%s\t%s\n' "$name" "$name" "${desc:-(no description)}" "$dir"
+    done >>"$tmp"
+  done
+  if [ -s "$IGNORE" ]; then
+    awk -F'\t' 'NR==FNR { if ($0 !~ /^#/ && NF) skip[$0]=1; next } !($2 in skip)' "$IGNORE" "$tmp" >"$tmp.2" && mv "$tmp.2" "$tmp"
+  fi
+  sort -t$'\t' -k1,1 -k2,2 -u "$tmp" >"$INDEX" && rm -f "$tmp"
+}
+
+# ─── preview ─────────────────────────────────────────────────────────────────
+preview() {  # $1 name  $2 command  $3 source
+  local name=$1 cmd=$2 src=$3 b
+  printf '\033[1m%s\033[0m\n' "$name"
+  case "$src" in
+    brew)
+      brew desc "$name" 2>/dev/null | sed 's/^[^:]*: //'
+      echo
+      printf 'Commands: '; ls "$BREW_PREFIX/opt/$name/bin" 2>/dev/null | tr '\n' ' '; echo; echo
+      ;;
+    cask) brew desc --cask "$name" 2>/dev/null | sed 's/^[^:]*: //'; echo; echo "Opens the app: $cmd"; return ;;
+    *)    echo "$src/$name"; echo ;;
+  esac
+  # Nothing is executed here: a cheat sheet from tldr, else the man page, else the script header.
+  b=${cmd%% *}
+  if command -v tldr >/dev/null && tldr --color always "$b" 2>/dev/null; then return; fi
+  if man -w "$b" >/dev/null 2>&1; then MANWIDTH=80 man "$b" 2>/dev/null | col -b | head -60; return; fi
+  [ -f "$src/$name" ] && head -40 "$src/$name"
+}
+
+# ─── main ────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  --init)
+    cat <<'EOF'
+# los: pick a program, it lands in your prompt (Enter runs it, or add arguments first).
+los() {
+  local cmd
+  cmd=$(command los --pick "$@") || return
+  [[ -n $cmd ]] && print -z -- "$cmd "
+}
+EOF
+    exit ;;
+  --refresh) build_index; echo "$(wc -l <"$INDEX" | tr -d ' ') programs indexed."; exit ;;
+  --preview) preview "$2" "$3" "$4"; exit ;;
+  --version) echo "los $VERSION"; exit ;;
+  -h|--help) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit ;;
+  --pick|"") ;;
+  *) echo "Unknown option: $1 (see los --help)" >&2; exit 2 ;;
+esac
+
+for dep in fzf jq; do
+  command -v "$dep" >/dev/null || { echo "los needs $dep: brew install $dep" >&2; exit 1; }
+done
+needs_refresh && build_index
+
+awk -F'\t' '{ printf "%-13s %-22s %s\t%s\t%s\t%s\n", $1, $2, $4, $2, $3, $5 }' "$INDEX" |
+  fzf --ansi --delimiter='\t' --with-nth=1 --layout=reverse --info=inline \
+      --prompt='los › ' \
+      --header='Type to filter (name, category, description)   Enter: pick   Esc: cancel' \
+      --preview="'$SELF' --preview {2} {3} {4}" --preview-window='right,55%,wrap' |
+  cut -f3
