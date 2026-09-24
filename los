@@ -12,6 +12,7 @@
 # Settings (environment):
 #   LOS_PATHS    extra folders with your own scripts, colon separated (default: ~/.local/bin)
 #   LOS_IGNORE   file with names to hide, one per line (default: ~/.config/los/ignore)
+#   LOS_DESCRIPTIONS  own descriptions as "name: text" lines (default: ~/.config/los/descriptions)
 
 set -o pipefail
 VERSION="1.0.0"
@@ -19,6 +20,7 @@ VERSION="1.0.0"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/los"
 INDEX="$CACHE_DIR/index.tsv"
 IGNORE="${LOS_IGNORE:-${XDG_CONFIG_HOME:-$HOME/.config}/los/ignore}"
+DESCRIPTIONS="${LOS_DESCRIPTIONS:-${XDG_CONFIG_HOME:-$HOME/.config}/los/descriptions}"
 IFS=: read -r -a PATHS <<<"${LOS_PATHS:-$HOME/.local/bin}"
 SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 BREW_PREFIX="$(brew --prefix 2>/dev/null)"
@@ -50,7 +52,7 @@ categorize() {
 needs_refresh() {
   [ -s "$INDEX" ] || return 0
   local src
-  for src in "$BREW_PREFIX/Cellar" "$BREW_PREFIX/Caskroom" "${PATHS[@]}" "$IGNORE"; do
+  for src in "$BREW_PREFIX/Cellar" "$BREW_PREFIX/Caskroom" "${PATHS[@]}" "$IGNORE" "$DESCRIPTIONS"; do
     [ -e "$src" ] && [ "$src" -nt "$INDEX" ] && return 0
   done
   return 1
@@ -116,6 +118,11 @@ build_index() {
   done
   if [ -s "$IGNORE" ]; then
     awk -F'\t' 'NR==FNR { if ($0 !~ /^#/ && NF) skip[$0]=1; next } !($2 in skip)' "$IGNORE" "$tmp" >"$tmp.2" && mv "$tmp.2" "$tmp"
+  fi
+  if [ -s "$DESCRIPTIONS" ]; then
+    awk -F'\t' -v OFS='\t' '
+      NR==FNR { if ($0 ~ /^[^#].*: /) { i = index($0, ": "); d[substr($0, 1, i-1)] = substr($0, i+2) } next }
+      ($2 in d) { $4 = d[$2] } 1' "$DESCRIPTIONS" "$tmp" >"$tmp.2" && mv "$tmp.2" "$tmp"
   fi
   sort -t$'\t' -k1,1 -k2,2 -u "$tmp" >"$INDEX" && rm -f "$tmp"
 }
