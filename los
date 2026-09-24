@@ -8,6 +8,7 @@
 #   los                 pick a program (with shell integration: lands in your prompt)
 #   los --refresh       rebuild the index now
 #   los --init zsh      print the shell integration, put `eval "$(los --init zsh)"` in ~/.zshrc
+#                       (or `los --init bash` in ~/.bashrc)
 #
 # Settings (environment):
 #   LOS_PATHS    extra folders with your own scripts, colon separated (default: ~/.local/bin)
@@ -150,7 +151,8 @@ preview() {  # $1 name  $2 command  $3 source
 # ─── main ────────────────────────────────────────────────────────────────────
 case "${1:-}" in
   --init)
-    cat <<'EOF'
+    case "${2:-zsh}" in
+      zsh) cat <<'EOF'
 # los: pick a program, it lands in your prompt (Enter runs it, or add arguments first).
 los() {
   local cmd
@@ -158,11 +160,24 @@ los() {
   [[ -n $cmd ]] && print -z -- "$cmd "
 }
 EOF
+      ;;
+      bash) cat <<'EOF'
+# los: pick a program, edit the line if you like, Enter runs it.
+los() {
+  local cmd
+  cmd=$(command los --pick "$@") || return
+  [[ -n $cmd ]] || return
+  read -e -r -p "$ " -i "$cmd " cmd && history -s "$cmd" && eval "$cmd"
+}
+EOF
+      ;;
+      *) echo "Supported shells: zsh, bash" >&2; exit 2 ;;
+    esac
     exit ;;
   --refresh) build_index; echo "$(wc -l <"$INDEX" | tr -d ' ') programs indexed."; exit ;;
   --preview) preview "$2" "$3" "$4"; exit ;;
   --version) echo "los $VERSION"; exit ;;
-  -h|--help) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit ;;
+  -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit ;;
   --pick|"") ;;
   *) echo "Unknown option: $1 (see los --help)" >&2; exit 2 ;;
 esac
