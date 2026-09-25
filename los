@@ -16,7 +16,7 @@
 #   LOS_DESCRIPTIONS  own descriptions as "name: text" lines (default: ~/.config/los/descriptions)
 
 set -o pipefail
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/los"
 INDEX="$CACHE_DIR/index.tsv"
