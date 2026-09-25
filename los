@@ -188,7 +188,7 @@ done
 needs_refresh && build_index
 
 awk -F'\t' '{ printf "%-13s %-22s %s\t%s\t%s\t%s\n", $1, $2, $4, $2, $3, $5 }' "$INDEX" |
-  fzf --ansi --delimiter='\t' --with-nth=1 --layout=reverse --info=inline \
+  fzf --ansi --delimiter='\t' --with-nth=1 --layout=reverse --info=inline --no-hscroll \
       --prompt='los › ' \
       --header='Type to filter (name, category, description)   Enter: pick   Esc: cancel' \
       --preview="'$SELF' --preview {2} {3} {4}" --preview-window='right,55%,wrap' |
