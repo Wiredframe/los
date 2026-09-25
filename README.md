@@ -6,6 +6,8 @@ You install a CLI tool, use it twice and forget its name. `los` remembers for yo
 
 There is no catalog to maintain. Install something and it shows up.
 
+![los: type a few letters, pick a program, it lands in your prompt](docs/demo.gif)
+
 ## What does "los" mean?
 
 *Los* is German for **go!** It is the last word of every German countdown, *"Auf die Plätze, fertig, los!"* (on your marks, get set, go!). Germans also say *"Was ist los?"* when they want to know what's going on.
