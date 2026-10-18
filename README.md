@@ -20,9 +20,9 @@ So `los` is what you type when you want to get going but can't remember the name
 
 - **Homebrew formulae** you installed on request, with their `brew desc` description. Libraries without a command of their own are skipped.
 - **Homebrew casks** (apps), which open with `open -a`.
-- **Your own scripts** in `~/.local/bin` or any folder you add. The description is the first comment line at the top of the script.
+- **Your own scripts** in `~/.local/bin` or any folder you add, including scripts one subfolder deep (`~/Scripts/tool/tool.sh`). The description is the first comment line at the top of the script. A script that is not on your `PATH` is picked as `cd <its folder> && ./script`, so it runs next to its helper files.
 
-Every entry gets a category (Code, Media, Web, Files, System, Shell, AI, ...) derived from its description, so typing `media` shows your media tools. The preview on the right shows the [tldr](https://tldr.sh) page or the man page. Nothing is executed for the preview.
+Every entry gets a category (Code, Media, Web, Files, System, Shell, AI, ...) derived from its description, so typing `media` shows your media tools. The preview on the right shows the [tldr](https://tldr.sh) page or the man page, for your own scripts their header. In terminals narrower than 100 columns it moves below the list, `Ctrl-/` hides it. Nothing is executed for the preview.
 
 The picked command lands in your prompt. Press Enter to run it, or add arguments first.
 
@@ -73,7 +73,7 @@ All optional, set them before the `eval` line in your shell config.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LOS_PATHS` | `~/.local/bin` | Folders with your own scripts, separated by `:` |
+| `LOS_PATHS` | `~/.local/bin` | Folders with your own scripts, separated by `:` (subfolders one level deep are included) |
 | `LOS_IGNORE` | `~/.config/los/ignore` | Names to hide, one per line |
 | `LOS_DESCRIPTIONS` | `~/.config/los/descriptions` | Descriptions for programs that have none, as `name: text` lines |
 

@@ -11,12 +11,12 @@
 #                       (or `los --init bash` in ~/.bashrc)
 #
 # Settings (environment):
-#   LOS_PATHS    extra folders with your own scripts, colon separated (default: ~/.local/bin)
+#   LOS_PATHS    extra folders with your own scripts, colon separated, one subfolder deep (default: ~/.local/bin)
 #   LOS_IGNORE   file with names to hide, one per line (default: ~/.config/los/ignore)
 #   LOS_DESCRIPTIONS  own descriptions as "name: text" lines (default: ~/.config/los/descriptions)
 
 set -o pipefail
-VERSION="1.0.1"
+VERSION="1.1.0"
 
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/los"
 INDEX="$CACHE_DIR/index.tsv"
@@ -52,9 +52,14 @@ categorize() {
 # One line per program: category, name, command, description, source
 needs_refresh() {
   [ -s "$INDEX" ] || return 0
-  local src
+  local src dir
   for src in "$BREW_PREFIX/Cellar" "$BREW_PREFIX/Caskroom" "${PATHS[@]}" "$IGNORE" "$DESCRIPTIONS"; do
     [ -e "$src" ] && [ "$src" -nt "$INDEX" ] && return 0
+  done
+  for dir in "${PATHS[@]}"; do  # subfolders of your script folders
+    for src in "$dir"/*/; do
+      [ -e "$src" ] && [ "$src" -nt "$INDEX" ] && return 0
+    done
   done
   return 1
 }
@@ -86,6 +91,19 @@ script_desc() {  # the first line of the comment block at the top of a script, w
     { exit }' "$1" 2>/dev/null
 }
 
+script_cmd() {  # $1 name  $2 real path: the bare name if it is on PATH, else cd into its folder and run it there
+  local name=$1 real=$2 hit dir
+  hit=$(command -v -- "$name" 2>/dev/null)
+  [[ $hit == /* ]] && [[ $(realpath "$hit" 2>/dev/null) == "$real" ]] && { echo "$name"; return; }
+  dir=${real%/*}
+  if [[ $dir == "$HOME" || $dir == "$HOME"/* ]]; then
+    dir=${dir#"$HOME"}; dir="~${dir:+/$(printf '%q' "${dir#/}")}"
+  else
+    dir=$(printf '%q' "$dir")
+  fi
+  printf 'cd %s && ./%q' "$dir" "${real##*/}"
+}
+
 build_index() {
   mkdir -p "$CACHE_DIR"
   local tmp="$INDEX.tmp" name desc cmd f
@@ -107,14 +125,20 @@ build_index() {
       fi
     done >>"$tmp"
   fi
+  local seen=" " real
   for dir in "${PATHS[@]}"; do
     [ -d "$dir" ] || continue
-    for f in "$dir"/*; do
+    # the folder itself plus one level of subfolders (only real scripts there, no assets)
+    for f in "$dir"/* "$dir"/[!.]*/*; do
       [ -f "$f" ] && [ -x "$f" ] || continue
+      [[ ${f%/*} == "$dir" ]] || [[ $(head -c2 "$f" 2>/dev/null) == '#!' ]] || continue
       name=$(basename "$f")
       [[ $name == los || $name == *.bak || $name == *.old || $name == *~ ]] && continue
-      desc=$(script_desc "$f")
-      printf 'Mine\t%s\t%s\t%s\t%s\n' "$name" "$name" "${desc:-(no description)}" "$dir"
+      real=$(realpath "$f" 2>/dev/null) || real=$f
+      [[ $seen == *" $real "* ]] && continue  # symlinks and their targets only once
+      seen+="$real "
+      desc=$(script_desc "$real")
+      printf 'Mine\t%s\t%s\t%s\t%s\n' "$name" "$(script_cmd "$name" "$real")" "${desc:-(no description)}" "$real"
     done >>"$tmp"
   done
   if [ -s "$IGNORE" ]; then
@@ -125,12 +149,12 @@ build_index() {
       NR==FNR { if ($0 ~ /^[^#].*: /) { i = index($0, ": "); d[substr($0, 1, i-1)] = substr($0, i+2) } next }
       ($2 in d) { $4 = d[$2] } 1' "$DESCRIPTIONS" "$tmp" >"$tmp.2" && mv "$tmp.2" "$tmp"
   fi
-  sort -t$'\t' -k1,1 -k2,2 -u "$tmp" >"$INDEX" && rm -f "$tmp"
+  sort -t$'\t' -k1,1 -k2,2 -k3,3 -u "$tmp" >"$INDEX" && rm -f "$tmp"
 }
 
 # ─── preview ─────────────────────────────────────────────────────────────────
-preview() {  # $1 name  $2 command  $3 source
-  local name=$1 cmd=$2 src=$3 b
+preview() {  # $1 name  $2 command  $3 source ("brew", "cask" or the script's path)
+  local name=$1 cmd=$2 src=$3
   printf '\033[1m%s\033[0m\n' "$name"
   case "$src" in
     brew)
@@ -139,13 +163,15 @@ preview() {  # $1 name  $2 command  $3 source
       printf 'Commands: '; ls "$BREW_PREFIX/opt/$name/bin" 2>/dev/null | tr '\n' ' '; echo; echo
       ;;
     cask) brew desc --cask "$name" 2>/dev/null | sed 's/^[^:]*: //'; echo; echo "Opens the app: $cmd"; return ;;
-    *)    echo "$src/$name"; echo ;;
+    *)
+      echo "$src"; [[ $cmd == cd* ]] && echo "Runs in its folder: $cmd"; echo
+      # an own script shows its header, tldr and man would describe a namesake
+      if LC_ALL=C grep -Iq . "$src" 2>/dev/null; then head -40 "$src"; return; fi
+      ;;
   esac
-  # Nothing is executed here: a cheat sheet from tldr, else the man page, else the script header.
-  b=${cmd%% *}
-  if command -v tldr >/dev/null && tldr --color always "$b" 2>/dev/null; then return; fi
-  if man -w "$b" >/dev/null 2>&1; then MANWIDTH=80 man "$b" 2>/dev/null | col -b | head -60; return; fi
-  [ -f "$src/$name" ] && head -40 "$src/$name"
+  # Nothing is executed here: a cheat sheet from tldr, else the man page.
+  if command -v tldr >/dev/null && tldr --color always "$name" 2>/dev/null; then return; fi
+  if man -w "$name" >/dev/null 2>&1; then MANWIDTH=80 man "$name" 2>/dev/null | col -b | head -60; fi
 }
 
 # ─── main ────────────────────────────────────────────────────────────────────
@@ -187,9 +213,19 @@ for dep in fzf jq; do
 done
 needs_refresh && build_index
 
-awk -F'\t' '{ printf "%-13s %-22s %s\t%s\t%s\t%s\n", $1, $2, $4, $2, $3, $5 }' "$INDEX" |
+# Narrow terminals: a shorter name column and header, fzf moves the preview below the list.
+# stdout is captured by the shell integration, so the width comes from the terminal itself.
+cols=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2)
+if [ "${cols:-0}" -gt 0 ] && [ "$cols" -lt 100 ]; then
+  namew=18 header='Enter: pick · Esc: cancel · Ctrl-/: preview'
+else
+  namew=22 header='Type to filter (name, category, description)   Enter: pick   Esc: cancel   Ctrl-/: preview'
+fi
+
+awk -F'\t' -v nw="$namew" '{ printf "%-13s %-*s %s\t%s\t%s\t%s\n", $1, nw, $2, $4, $2, $3, $5 }' "$INDEX" |
   fzf --ansi --delimiter='\t' --with-nth=1 --layout=reverse --info=inline --no-hscroll \
-      --prompt='los › ' \
-      --header='Type to filter (name, category, description)   Enter: pick   Esc: cancel' \
-      --preview="'$SELF' --preview {2} {3} {4}" --preview-window='right,55%,wrap' |
+      --prompt='los › ' --header="$header" \
+      --preview="'$SELF' --preview {2} {3} {4}" \
+      --preview-window='right,55%,wrap,<100(down,45%,wrap)' \
+      --bind='ctrl-/:toggle-preview' |
   cut -f3
