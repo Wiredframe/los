@@ -213,19 +213,16 @@ for dep in fzf jq; do
 done
 needs_refresh && build_index
 
-# Narrow terminals: a shorter name column and header, fzf moves the preview below the list.
-# stdout is captured by the shell integration, so the width comes from the terminal itself.
-cols=$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2)
-if [ "${cols:-0}" -gt 0 ] && [ "$cols" -lt 100 ]; then
-  namew=18 header='Enter: pick · Esc: cancel · Ctrl-/: preview'
-else
-  namew=22 header='Type to filter (name, category, description)   Enter: pick   Esc: cancel   Ctrl-/: preview'
-fi
-
-awk -F'\t' -v nw="$namew" '{ printf "%-13s %-*s %s\t%s\t%s\t%s\n", $1, nw, $2, $4, $2, $3, $5 }' "$INDEX" |
+# Columns as wide as their longest entry (longer names are cut at 20), list and preview split evenly.
+# When the preview would get narrower than 50 columns (terminals under ~100), fzf puts it below the list.
+awk -F'\t' '
+  NR == FNR { if (length($1) > cw) cw = length($1); if (length($2) > nw) nw = length($2); next }
+  FNR == 1  { if (nw > 20) nw = 20 }
+  { n = length($2) > nw ? substr($2, 1, nw - 1) "…" : $2
+    printf "%-*s  %-*s  %s\t%s\t%s\t%s\n", cw, $1, nw, n, $4, $2, $3, $5 }' "$INDEX" "$INDEX" |
   fzf --ansi --delimiter='\t' --with-nth=1 --layout=reverse --info=inline --no-hscroll \
-      --prompt='los › ' --header="$header" \
+      --prompt='los › ' --header='Enter: pick · Esc: cancel · Ctrl-/: preview' \
       --preview="'$SELF' --preview {2} {3} {4}" \
-      --preview-window='right,55%,wrap,<100(down,45%,wrap)' \
+      --preview-window='right,50%,wrap,border-left,<50(down,50%,wrap,border-top)' \
       --bind='ctrl-/:toggle-preview' |
   cut -f3
